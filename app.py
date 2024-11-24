@@ -2,12 +2,13 @@ import streamlit as st
 import json
 import os
 import pickle
-from google_auth_oauthlib.flow import InstalledAppFlow
-from google.auth.transport.requests import Request
+from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
+from google_auth_oauthlib.flow import InstalledAppFlow
+from google.auth.transport.requests import Request
 
-# Authenticate using OAuth 2.0
+# Authenticate using Streamlit secrets
 def authenticate():
     try:
         # Check if token.pickle already exists (to reuse credentials)
@@ -15,15 +16,36 @@ def authenticate():
             with open("token.pickle", "rb") as token:
                 credentials = pickle.load(token)
         else:
-            # Authenticate using client secrets file
+            # Read secrets from Streamlit
+            client_secrets = {
+                "installed": {
+                    "client_id": st.secrets["oauth"]["client_id"],
+                    "project_id": st.secrets["oauth"]["project_id"],
+                    "auth_uri": st.secrets["oauth"]["auth_uri"],
+                    "token_uri": st.secrets["oauth"]["token_uri"],
+                    "auth_provider_x509_cert_url": st.secrets["oauth"]["auth_provider_x509_cert_url"],
+                    "client_secret": st.secrets["oauth"]["client_secret"],
+                    "redirect_uris": st.secrets["oauth"]["redirect_uris"],
+                }
+            }
+
+            # Save the secrets to a temporary JSON file for OAuth flow
+            with open("client_secrets_temp.json", "w") as temp_file:
+                json.dump(client_secrets, temp_file)
+
+            # Authenticate using client secrets
             flow = InstalledAppFlow.from_client_secrets_file(
-                "client_secrets.json",  # Ensure your JSON file is named this way and placed in the app directory
+                "client_secrets_temp.json",
                 scopes=["https://www.googleapis.com/auth/youtube.force-ssl"]
             )
             credentials = flow.run_local_server(port=8080, prompt="consent", authorization_prompt_message="")
+
             # Save credentials for future use
             with open("token.pickle", "wb") as token:
                 pickle.dump(credentials, token)
+
+            # Remove the temporary file
+            os.remove("client_secrets_temp.json")
 
         # Check if credentials are still valid
         if credentials and credentials.expired and credentials.refresh_token:
