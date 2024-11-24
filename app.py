@@ -1,15 +1,34 @@
 import streamlit as st
 import json
-from google.oauth2 import service_account
+import os
+import pickle
+from google_auth_oauthlib.flow import InstalledAppFlow
+from google.auth.transport.requests import Request
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
-import tempfile
 
-# Authenticate using Streamlit secrets
+# Authenticate using OAuth 2.0
 def authenticate():
     try:
-        service_account_info = json.loads(st.secrets["service_account_key"])
-        credentials = service_account.Credentials.from_service_account_info(service_account_info)
+        # Check if token.pickle already exists (to reuse credentials)
+        if os.path.exists("token.pickle"):
+            with open("token.pickle", "rb") as token:
+                credentials = pickle.load(token)
+        else:
+            # Authenticate using client secrets file
+            flow = InstalledAppFlow.from_client_secrets_file(
+                "client_secrets.json",  # Ensure your JSON file is named this way and placed in the app directory
+                scopes=["https://www.googleapis.com/auth/youtube.force-ssl"]
+            )
+            credentials = flow.run_local_server(port=8080, prompt="consent", authorization_prompt_message="")
+            # Save credentials for future use
+            with open("token.pickle", "wb") as token:
+                pickle.dump(credentials, token)
+
+        # Check if credentials are still valid
+        if credentials and credentials.expired and credentials.refresh_token:
+            credentials.refresh(Request())
+
         youtube = build("youtube", "v3", credentials=credentials)
         return youtube
     except Exception as e:
@@ -18,12 +37,7 @@ def authenticate():
 
 # Upload video function
 def upload_video(youtube, video_file, title, description, category_id, tags):
-    # Save the uploaded file temporarily
-    with tempfile.NamedTemporaryFile(delete=False) as temp_file:
-        temp_file.write(video_file.read())
-        temp_file_path = temp_file.name
-
-    media = MediaFileUpload(temp_file_path, mimetype="video/*", resumable=True)
+    media = MediaFileUpload(video_file.name, mimetype="video/*", resumable=True)
     body = {
         "snippet": {
             "title": title,
@@ -33,54 +47,38 @@ def upload_video(youtube, video_file, title, description, category_id, tags):
         },
         "status": {"privacyStatus": "private"},
     }
-    try:
-        request = youtube.videos().insert(part="snippet,status", body=body, media_body=media)
-        response = request.execute()
-        return response
-    except Exception as e:
-        st.error(f"Failed to upload video: {e}")
-        return None
+    request = youtube.videos().insert(part="snippet,status", body=body, media_body=media)
+    response = request.execute()
+    return response
 
 # Get video details function
 def get_video_details(youtube, video_id):
-    try:
-        request = youtube.videos().list(part="snippet,contentDetails,statistics", id=video_id)
-        response = request.execute()
-        return response
-    except Exception as e:
-        st.error(f"Failed to fetch video details: {e}")
-        return None
+    request = youtube.videos().list(part="snippet,contentDetails,statistics", id=video_id)
+    response = request.execute()
+    return response
 
 # Update video details function
 def update_video_details(youtube, video_id, new_title=None, new_description=None, new_tags=None):
-    try:
-        video_details = get_video_details(youtube, video_id)
-        snippet = video_details["items"][0]["snippet"]
+    video_details = get_video_details(youtube, video_id)
+    snippet = video_details["items"][0]["snippet"]
 
-        if new_title:
-            snippet["title"] = new_title
-        if new_description:
-            snippet["description"] = new_description
-        if new_tags:
-            snippet["tags"] = new_tags
+    if new_title:
+        snippet["title"] = new_title
+    if new_description:
+        snippet["description"] = new_description
+    if new_tags:
+        snippet["tags"] = new_tags
 
-        body = {"id": video_id, "snippet": snippet}
-        request = youtube.videos().update(part="snippet", body=body)
-        response = request.execute()
-        return response
-    except Exception as e:
-        st.error(f"Failed to update video details: {e}")
-        return None
+    body = {"id": video_id, "snippet": snippet}
+    request = youtube.videos().update(part="snippet", body=body)
+    response = request.execute()
+    return response
 
 # Delete video function
 def delete_video(youtube, video_id):
-    try:
-        request = youtube.videos().delete(id=video_id)
-        response = request.execute()
-        return response
-    except Exception as e:
-        st.error(f"Failed to delete video: {e}")
-        return None
+    request = youtube.videos().delete(id=video_id)
+    response = request.execute()
+    return response
 
 # Streamlit App
 def main():
@@ -103,9 +101,7 @@ def main():
                 if youtube:
                     tags_list = [tag.strip() for tag in tags.split(",")]
                     response = upload_video(youtube, video_file, title, description, category_id, tags_list)
-                    if response:
-                        st.success("Video uploaded successfully!")
-                        st.json(response)
+                    st.write(response)
             else:
                 st.warning("Please fill in all fields.")
 
@@ -118,8 +114,7 @@ def main():
                 youtube = authenticate()
                 if youtube:
                     details = get_video_details(youtube, video_id)
-                    if details:
-                        st.json(details)
+                    st.write(details)
 
     with tab3:  # Update Video Details
         st.header("Update Video Details")
@@ -134,9 +129,7 @@ def main():
                 if youtube:
                     tags_list = [tag.strip() for tag in new_tags.split(",")] if new_tags else None
                     response = update_video_details(youtube, video_id, new_title, new_description, tags_list)
-                    if response:
-                        st.success("Video details updated successfully!")
-                        st.json(response)
+                    st.write(response)
 
     with tab4:  # Delete Video
         st.header("Delete Video")
@@ -147,8 +140,7 @@ def main():
                 youtube = authenticate()
                 if youtube:
                     response = delete_video(youtube, video_id)
-                    if response:
-                        st.success("Video deleted successfully!")
+                    st.write(response)
 
 if __name__ == "__main__":
     main()
